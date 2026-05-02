@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { Anchor, User, History, Loader2, Sparkles, Navigation, Waves, Ship, MapPin } from 'lucide-react';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { Anchor, User, Loader2, Sparkles, Waves, Ship } from 'lucide-react';
 
-// --- 配置與常數 ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
+// --- 1. Firebase 配置 (請在此填入你的金鑰) ---
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+// 防止重複初始化
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'busan-color-walk-001';
+const appId = 'busan-color-walk-001';
 
+// --- 2. 常數定義 ---
 const BASE_COLORS = [
   { id: 'black', name: '黑色', hex: '#1A1A1B', text: 'white' },
   { id: 'red', name: '紅色', hex: '#E74C3C', text: 'white' },
@@ -26,7 +36,7 @@ const ALL_OPTIONS = ['A', 'B'].flatMap(group =>
   BASE_COLORS.map(c => ({ ...c, group, key: `${c.id}-${group}` }))
 );
 
-// --- 視覺組件 ---
+// --- 3. 視覺組件 ---
 const Seagull = ({ className }) => (
   <svg viewBox="0 0 100 50" className={className} fill="none" stroke="white" strokeWidth="3">
     <path d="M10,30 Q30,10 50,30 Q70,10 90,30" strokeLinecap="round" />
@@ -53,6 +63,7 @@ const Lighthouse = () => (
   </svg>
 );
 
+// --- 4. 主程式 ---
 export default function App() {
   const [user, setUser] = useState(null);
   const [userName, setUserName] = useState('');
@@ -66,15 +77,19 @@ export default function App() {
   const frameRef = useRef();
 
   useEffect(() => {
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        try {
+          await signInAnonymously(auth);
+        } catch (err) {
+          console.error("Auth error:", err);
+        }
       } else {
-        await signInAnonymously(auth);
+        setUser(u);
+        setLoading(false);
       }
-    };
-    initAuth().catch(console.error);
-    return onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
+    });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -120,8 +135,12 @@ export default function App() {
     ctx.fillText("BUSAN OCEAN", cx, cy + 5);
 
     // 指針
-    ctx.save(); ctx.translate(cx, 20); ctx.fillStyle = "#ef4444";
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-10, 25); ctx.lineTo(10, 25); ctx.fill(); ctx.restore();
+    ctx.save(); 
+    ctx.translate(cx, 20); 
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath(); 
+    ctx.moveTo(-12, 0); ctx.lineTo(12, 0); ctx.lineTo(0, 25);
+    ctx.closePath(); ctx.fill(); ctx.restore();
   };
 
   useEffect(() => drawWheel(startAngle.current), [picks]);
@@ -154,12 +173,16 @@ export default function App() {
 
   const savePick = async (opt) => {
     const data = { userName, color: opt.name, group: opt.group, hex: opt.hex, key: opt.key, timestamp: Date.now(), userId: user.uid };
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'picks', opt.key), data);
-    setResult(data);
+    try {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'picks', opt.key), data);
+        setResult(data);
+    } catch (e) {
+        alert("儲存失敗，請檢查權限設定");
+    }
     setIsSpinning(false);
   };
 
-  if (loading) return <div className="flex h-screen items-center justify-center text-blue-400"><Loader2 className="animate-spin" /></div>;
+  if (loading) return <div className="flex h-screen items-center justify-center text-blue-400 bg-sky-50"><Loader2 className="animate-spin" /></div>;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-sky-500 via-sky-300 to-amber-100 p-4 flex flex-col items-center font-sans pb-20 relative overflow-x-hidden">
@@ -233,10 +256,10 @@ export default function App() {
         </div>
       </div>
 
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #93c5fd; border-radius: 10px; }
-      `}} />
+      `}</style>
     </div>
   );
 }
