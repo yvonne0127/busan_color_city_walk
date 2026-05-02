@@ -1,0 +1,387 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  onSnapshot, 
+  setDoc, 
+  query,
+  getDocs
+} from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { Star, Anchor, User, CheckCircle2, History, Loader2, Sparkles, Navigation, Waves, Ship } from 'lucide-react';
+
+// --- Firebase Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'busan-color-walk-001';
+
+// --- Constants ---
+const BASE_COLORS = [
+  { id: 'black', name: '黑色', hex: '#1A1A1B', text: 'white' },
+  { id: 'red', name: '紅色', hex: '#E74C3C', text: 'white' },
+  { id: 'orange', name: '橙色', hex: '#E67E22', text: 'white' },
+  { id: 'yellow', name: '黃色', hex: '#F1C40F', text: 'black' },
+  { id: 'white', name: '白色', hex: '#FDFEFE', text: 'black' },
+  { id: 'blue', name: '藍色', hex: '#3498DB', text: 'white' },
+  { id: 'green', name: '綠色', hex: '#27AE60', text: 'white' },
+  { id: 'purple', name: '紫色', hex: '#8E44AD', text: 'white' }
+];
+
+const ALL_OPTIONS = [];
+['A', 'B'].forEach(group => {
+  BASE_COLORS.forEach(c => {
+    ALL_OPTIONS.push({ ...c, group, key: `${c.id}-${group}` });
+  });
+});
+
+// --- Sea Style Assets ---
+const Seagull = ({ className }) => (
+  <svg viewBox="0 0 100 50" className={className}>
+    <path d="M10,30 Q30,10 50,30 Q70,10 90,30" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" />
+  </svg>
+);
+
+const SailboatBeach = () => (
+  <svg viewBox="0 0 240 200" className="w-40 h-32 md:w-48 md:h-40 drop-shadow-xl">
+    {/* Sand Beach Background */}
+    <path d="M10,170 Q120,140 230,170 L230,200 L10,200 Z" fill="#FDE68A" />
+    <circle cx="40" cy="180" r="2" fill="#F59E0B" opacity="0.5" />
+    <circle cx="180" cy="175" r="3" fill="#F59E0B" opacity="0.3" />
+    
+    {/* Sea Waves near beach */}
+    <path d="M10,165 Q120,135 230,165" fill="none" stroke="#BAE6FD" strokeWidth="3" strokeDasharray="10,5" opacity="0.6" />
+
+    {/* Sailboat */}
+    <g className="animate-bounce" style={{ animationDuration: '3s' }}>
+      {/* Boat Hull */}
+      <path d="M70,140 L170,140 L155,160 L85,160 Z" fill="#1E3A8A" stroke="#1E293B" strokeWidth="2" />
+      {/* Mast */}
+      <rect x="117" y="70" width="4" height="70" fill="#475569" />
+      {/* Main Sail */}
+      <path d="M123,75 L165,130 L123,130 Z" fill="white" stroke="#1E3A8A" strokeWidth="1.5" />
+      <path d="M123,90 L150,115 M123,105 L140,125" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" />
+      {/* Small Sail */}
+      <path d="M115,80 L80,130 L115,130 Z" fill="#DBEAFE" stroke="#1E3A8A" strokeWidth="1" />
+      {/* Flag */}
+      <path d="M121,70 L135,75 L121,80" fill="#EF4444" />
+    </g>
+  </svg>
+);
+
+const Lighthouse = () => (
+  <svg viewBox="0 0 100 150" className="w-10 h-16 md:w-12 md:h-20 opacity-90">
+    <path d="M30,140 L40,40 L60,40 L70,140 Z" fill="#EF4444" stroke="white" strokeWidth="2" />
+    <rect x="35" y="110" width="30" height="10" fill="white" />
+    <rect x="38" y="70" width="24" height="10" fill="white" />
+    {/* Light Effect */}
+    <circle cx="50" cy="30" r="12" fill="#FDE047" className="animate-pulse" />
+    <circle cx="50" cy="30" r="25" fill="#FDE047" opacity="0.2" className="animate-ping" />
+  </svg>
+);
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [userName, setUserName] = useState('');
+  const [picks, setPicks] = useState([]);
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(true);
+  
+  const canvasRef = useRef(null);
+  const startAngle = useRef(0);
+  const spinRequestRef = useRef(null);
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) { console.error(err); }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const picksRef = collection(db, 'artifacts', appId, 'public', 'data', 'picks');
+    const unsubscribe = onSnapshot(picksRef, (snapshot) => {
+      setPicks(snapshot.docs.map(doc => doc.data()));
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const drawWheel = (angleOffset = 0) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const outerRadius = Math.min(centerX, centerY) * 0.85;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ALL_OPTIONS.forEach((opt, i) => {
+      const isTaken = picks.some(p => p.key === opt.key);
+      const angleStep = (Math.PI * 2) / ALL_OPTIONS.length;
+      const start = angleOffset + i * angleStep;
+      const end = start + angleStep;
+
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, outerRadius, start, end);
+      ctx.fillStyle = isTaken ? '#cbd5e1' : opt.hex;
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(start + angleStep / 2);
+      ctx.textAlign = "right";
+      ctx.fillStyle = isTaken ? '#64748b' : opt.text;
+      ctx.font = "bold 11px 'Noto Sans TC'";
+      ctx.fillText(isTaken ? "已佔" : `${opt.name[0]}${opt.group}`, outerRadius - 10, 4);
+      ctx.restore();
+    });
+
+    // Compass Center
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 48, 0, Math.PI * 2);
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fill();
+    ctx.strokeStyle = '#93c5fd';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    
+    ctx.fillStyle = 'white';
+    ctx.textAlign = "center";
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillText("BUSAN OCEAN", centerX, centerY + 4);
+
+    // Compass Needle (Pointer)
+    ctx.save();
+    ctx.translate(centerX, 20);
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-10, 25);
+    ctx.lineTo(10, 25);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  };
+
+  useEffect(() => { drawWheel(startAngle.current); }, [picks]);
+
+  const spin = () => {
+    if (!userName.trim()) return alert("請輸入冒險者的姓名。");
+    if (picks.length >= 16) return alert("本次航行名額已滿！");
+    if (isSpinning) return;
+    setIsSpinning(true);
+    let spinTime = 0;
+    const spinTimeTotal = 5000 + Math.random() * 2000;
+    const initialVelocity = 0.5 + Math.random() * 0.3;
+    const animate = () => {
+      spinTime += 20;
+      if (spinTime < spinTimeTotal) {
+        const progress = spinTime / spinTimeTotal;
+        const ease = 1 - Math.pow(1 - progress, 5);
+        startAngle.current += initialVelocity * (1 - ease);
+        drawWheel(startAngle.current);
+        spinRequestRef.current = requestAnimationFrame(animate);
+      } else {
+        cancelAnimationFrame(spinRequestRef.current);
+        finishSpin();
+      }
+    };
+    animate();
+  };
+
+  const finishSpin = async () => {
+    const totalOptions = ALL_OPTIONS.length;
+    const anglePerOption = (Math.PI * 2) / totalOptions;
+    const normalizedAngle = ( (Math.PI * 1.5) - startAngle.current ) % (Math.PI * 2);
+    const positiveAngle = normalizedAngle < 0 ? normalizedAngle + Math.PI * 2 : normalizedAngle;
+    const index = Math.floor(positiveAngle / anglePerOption) % totalOptions;
+    const selected = ALL_OPTIONS[index];
+    if (picks.some(p => p.key === selected.key)) {
+      const avail = ALL_OPTIONS.filter(o => !picks.some(p => p.key === o.key));
+      if (avail.length > 0) savePick(avail[Math.floor(Math.random() * avail.length)]);
+    } else {
+      savePick(selected);
+    }
+  };
+
+  const savePick = async (option) => {
+    const pickData = { userName, color: option.name, group: option.group, hex: option.hex, key: option.key, timestamp: Date.now(), userId: user.uid };
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'picks', option.key), pickData);
+    setResult(pickData);
+    setIsSpinning(false);
+  };
+
+  if (loading) return <div className="flex h-screen items-center justify-center bg-blue-50 text-blue-600"><Loader2 className="animate-spin" /></div>;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0ea5e9] via-[#7dd3fc] to-[#fef3c7] p-4 flex flex-col items-center overflow-x-hidden font-sans pb-20 relative">
+      
+      {/* Background Decor */}
+      <Seagull className="absolute top-12 left-10 w-12 opacity-40 animate-pulse" />
+      <Seagull className="absolute top-24 right-16 w-8 opacity-30 animate-bounce" />
+      
+      {/* Top Decoration Section */}
+      <div className="w-full max-w-md flex flex-col items-center relative z-10 pt-4">
+        <div className="flex items-end justify-center mb-2 w-full">
+          {/* Main Illustration: Sailboat on Beach */}
+          <div className="relative -mr-4 z-10">
+            <SailboatBeach />
+          </div>
+          {/* Supporting Asset: Lighthouse on the side */}
+          <div className="mb-4 z-0">
+             <Lighthouse />
+          </div>
+        </div>
+
+        {/* Content Card */}
+        <div className="w-full bg-white/90 backdrop-blur-xl rounded-[3rem] p-8 shadow-[0_20px_60px_rgba(30,58,138,0.2)] border-t-4 border-white text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest mb-6 shadow-lg shadow-blue-200">
+            <Anchor size={12} /> Sailing Explorer
+          </div>
+          
+          <h1 className="text-4xl font-black text-blue-900 mb-8 tracking-tighter">釜山 Color Walk</h1>
+
+          {!result ? (
+            <div className="space-y-5">
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-5 flex items-center">
+                  <User className="text-blue-500" size={18} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="輸入航海員姓名..."
+                  className="w-full pl-14 pr-6 py-4.5 rounded-[2rem] bg-blue-50/50 border-2 border-transparent focus:border-blue-400 focus:bg-white outline-none transition-all font-bold text-blue-900 placeholder:text-blue-300 shadow-inner"
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  disabled={isSpinning}
+                />
+              </div>
+              <button
+                onClick={spin}
+                disabled={isSpinning || picks.length >= 16}
+                className={`w-full py-5 rounded-[2rem] font-black text-xl text-white shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-2 ${
+                  isSpinning || picks.length >= 16 
+                  ? 'bg-slate-300' 
+                  : 'bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 hover:brightness-110'
+                }`}
+              >
+                {isSpinning ? <Loader2 className="animate-spin" /> : <Ship size={20} />}
+                {isSpinning ? '正在破浪前進...' : '出發尋找寶藏'}
+              </button>
+              <div className="flex justify-between items-center px-4">
+                <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Navigator: {userName || 'None'}</span>
+                <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Ships: {16 - picks.length}/16</span>
+              </div>
+            </div>
+          ) : (
+            <div className="animate-in fade-in zoom-in duration-500 py-4">
+              <div className="bg-gradient-to-br from-white to-blue-50 border-4 border-white rounded-[3rem] p-10 shadow-2xl relative">
+                <div className="absolute -top-4 -right-4 bg-yellow-400 text-white p-3 rounded-full animate-bounce shadow-lg">
+                  <Sparkles size={20} />
+                </div>
+                <p className="text-blue-600 font-black text-xs mb-4 tracking-[0.2em] uppercase">Arrival Confirmed</p>
+                <div className="text-5xl font-black mb-3 tracking-tighter" style={{ color: result.hex === '#FFFFFF' ? '#1e3a8a' : result.hex }}>
+                  {result.color}
+                </div>
+                <div className="text-sm font-black text-slate-400 mb-8 uppercase tracking-widest border-t border-slate-100 pt-3 inline-block">Group {result.group}</div>
+                <p className="text-blue-900/60 font-bold italic text-xs mb-8 block px-4">「每一次的航行，都是為了遇見最獨特的色彩。」</p>
+                <button onClick={() => setResult(null)} className="w-full py-4.5 bg-blue-950 text-white rounded-[1.5rem] font-black text-sm tracking-widest hover:bg-blue-900 transition-all shadow-xl hover:translate-y-[-2px]">
+                  開始陸地冒險
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Wheel Area */}
+      <div className="relative my-12">
+        <div className="absolute -inset-16 bg-blue-500/10 blur-[100px] rounded-full"></div>
+        <canvas 
+          ref={canvasRef} 
+          width={400} 
+          height={400} 
+          className="relative z-10 max-w-[88vw] h-auto drop-shadow-[0_25px_60px_rgba(30,58,138,0.25)] rounded-full bg-white/30 p-3 border-[12px] border-white/95"
+        />
+        {/* Ocean Waves Decor */}
+        <div className="absolute -bottom-10 -left-12 -right-12 h-20 opacity-40 z-0">
+          <Waves className="w-full h-full text-blue-600 animate-pulse" />
+        </div>
+      </div>
+
+      {/* History Log */}
+      <div className="w-full max-w-md bg-white/60 backdrop-blur-2xl rounded-[3rem] p-8 shadow-2xl border border-white/40">
+        <h3 className="text-blue-950 font-black text-xl mb-6 flex items-center gap-3">
+          <div className="bg-blue-700 p-2.5 rounded-2xl text-white shadow-xl shadow-blue-200"><Anchor size={20} /></div>
+          航海日誌
+        </h3>
+        <div className="space-y-3.5 max-h-80 overflow-y-auto pr-3 custom-scrollbar">
+          {picks.length === 0 ? (
+            <div className="flex flex-col items-center py-12 text-blue-300">
+              <Ship size={48} className="mb-4 opacity-10" />
+              <p className="text-[10px] font-black uppercase tracking-[0.3em]">尚未有船隻進港</p>
+            </div>
+          ) : (
+            picks.sort((a, b) => b.timestamp - a.timestamp).map((pick) => (
+              <div key={pick.key} className="flex items-center gap-4 p-4.5 rounded-[2rem] bg-white shadow-md hover:shadow-lg transition-shadow border border-blue-50">
+                <div className="w-6 h-6 rounded-full shadow-inner ring-4 ring-blue-50" style={{ backgroundColor: pick.hex, border: pick.hex === '#FFFFFF' ? '1px solid #ddd' : 'none' }} />
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="text-sm font-black text-blue-950 truncate">{pick.userName}</span>
+                  <span className="text-[10px] text-blue-500 font-black uppercase tracking-widest mt-0.5">{pick.color} · {pick.group}組</span>
+                </div>
+                <div className="text-[9px] font-bold text-slate-300 bg-slate-50 px-2 py-1 rounded-full uppercase">
+                  {new Date(pick.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Dynamic Sea Foam Footer */}
+      <div className="fixed bottom-0 left-0 w-full pointer-events-none h-32 z-50">
+        <svg className="w-full h-full" viewBox="0 0 1200 120" preserveAspectRatio="none">
+            <path d="M0,0 Q300,60 600,0 Q900,60 1200,0 V120 H0 Z" fill="white" fillOpacity="0.4" className="animate-wave-slow" />
+            <path d="M0,30 Q300,90 600,30 Q900,90 1200,30 V120 H0 Z" fill="white" fillOpacity="0.2" className="animate-wave-fast" />
+        </svg>
+      </div>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes wave {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(10px); }
+        }
+        .animate-wave-slow { animation: wave 8s ease-in-out infinite; }
+        .animate-wave-fast { animation: wave 5s ease-in-out infinite; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #93c5fd; border-radius: 10px; }
+      `}} />
+    </div>
+  );
+}
