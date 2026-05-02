@@ -1,239 +1,40 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>釜山 Color Walk</title>
-    <!-- 1. 載入必要的庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Firebase SDK (使用 compat 版本以確保穩定性) -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; margin: 0; background-color: #f0f9ff; }
-        .animate-wave { animation: wave 8s ease-in-out infinite; }
-        @keyframes wave { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(10px); } }
-    </style>
+    <!-- 改用單一相容版 SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 </head>
 <body>
     <div id="root"></div>
-
     <script type="text/babel">
-        // ==========================================
-        // ⚠️ 必須填寫：請將下方的 {} 替換為你的 Firebase Config
-        // ==========================================
+        // --- 請在這裡填入你的設定 ---
         const firebaseConfig = {
-            apiKey: "你的API_KEY",
-            authDomain: "你的AUTH_DOMAIN",
-            projectId: "你的PROJECT_ID",
-            storageBucket: "你的STORAGE_BUCKET",
-            messagingSenderId: "你的MESSAGING_SENDER_ID",
-            appId: "你的APP_ID"
+            apiKey: "你的真實API_KEY",
+            authDomain: "你的真實DOMAIN",
+            projectId: "你的真實ID",
+            storageBucket: "你的真實BUCKET",
+            messagingSenderId: "你的真實ID",
+            appId: "你的真實APP_ID"
         };
 
-        // 初始化 Firebase
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
+        // 初始化與啟動
+        firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const auth = firebase.auth();
-        const appId = 'busan-color-walk-001';
-
-        const { useState, useEffect, useRef } = React;
-
-        // --- 簡易組件 ---
-        const SailboatBeach = () => (
-            <svg viewBox="0 0 240 200" className="w-48 h-40 drop-shadow-xl">
-                <path d="M10,170 Q120,140 230,170 L230,200 L10,200 Z" fill="#FDE68A" />
-                <g className="animate-bounce" style={{ animationDuration: '3s' }}>
-                    <path d="M70,140 L170,140 L155,160 L85,160 Z" fill="#1E3A8A" />
-                    <rect x="117" y="70" width="4" height="70" fill="#475569" />
-                    <path d="M123,75 L165,130 L123,130 Z" fill="white" stroke="#1E3A8A" />
-                    <path d="M121,70 L135,75 L121,80" fill="#EF4444" />
-                </g>
-            </svg>
-        );
-
-        const BASE_COLORS = [
-            { id: 'black', name: '黑色', hex: '#1A1A1B', text: 'white' },
-            { id: 'red', name: '紅色', hex: '#E74C3C', text: 'white' },
-            { id: 'orange', name: '橙色', hex: '#E67E22', text: 'white' },
-            { id: 'yellow', name: '黃色', hex: '#F1C40F', text: 'black' },
-            { id: 'white', name: '白色', hex: '#FDFEFE', text: 'black' },
-            { id: 'blue', name: '藍色', hex: '#3498DB', text: 'white' },
-            { id: 'green', name: '綠色', hex: '#27AE60', text: 'white' },
-            { id: 'purple', name: '紫色', hex: '#8E44AD', text: 'white' }
-        ];
-
-        const ALL_OPTIONS = [];
-        ['A', 'B'].forEach(group => {
-            BASE_COLORS.forEach(c => {
-                ALL_OPTIONS.push({ ...c, group, key: `${c.id}-${group}` });
-            });
-        });
-
+        
         function App() {
-            const [user, setUser] = useState(null);
-            const [userName, setUserName] = useState('');
-            const [picks, setPicks] = useState([]);
-            const [isSpinning, setIsSpinning] = useState(false);
-            const [result, setResult] = useState(null);
-            const [loading, setLoading] = useState(true);
-            const canvasRef = useRef(null);
-            const startAngle = useRef(0);
-
-            useEffect(() => {
-                auth.signInAnonymously().catch(err => console.error("登入失敗:", err));
-                return auth.onAuthStateChanged((u) => {
-                    setUser(u);
-                    setLoading(false);
-                });
-            }, []);
-
-            useEffect(() => {
-                if (!user) return;
-                const unsubscribe = db.collection('artifacts').doc(appId)
-                    .collection('public').doc('data').collection('picks')
-                    .onSnapshot((snapshot) => {
-                        setPicks(snapshot.docs.map(doc => doc.data()));
-                    }, err => console.error("監聽失敗:", err));
-                return () => unsubscribe();
-            }, [user]);
-
-            const drawWheel = (angleOffset = 0) => {
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                const ctx = canvas.getContext('2d');
-                const centerX = canvas.width / 2;
-                const centerY = canvas.height / 2;
-                const outerRadius = 160;
-
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ALL_OPTIONS.forEach((opt, i) => {
-                    const isTaken = picks.some(p => p.key === opt.key);
-                    const angleStep = (Math.PI * 2) / ALL_OPTIONS.length;
-                    const start = angleOffset + i * angleStep;
-                    const end = start + angleStep;
-
-                    ctx.beginPath();
-                    ctx.moveTo(centerX, centerY);
-                    ctx.arc(centerX, centerY, outerRadius, start, end);
-                    ctx.fillStyle = isTaken ? '#cbd5e1' : opt.hex;
-                    ctx.fill();
-                    ctx.strokeStyle = 'white';
-                    ctx.stroke();
-
-                    ctx.save();
-                    ctx.translate(centerX, centerY);
-                    ctx.rotate(start + angleStep / 2);
-                    ctx.fillStyle = isTaken ? '#64748b' : opt.text;
-                    ctx.font = "bold 12px sans-serif";
-                    ctx.fillText(isTaken ? "已佔" : `${opt.name[0]}${opt.group}`, outerRadius - 40, 5);
-                    ctx.restore();
-                });
-            };
-
-            useEffect(() => { drawWheel(0); }, [picks, loading]);
-
-            const spin = () => {
-                if (!userName.trim()) return alert("請輸入航海員姓名。");
-                if (isSpinning) return;
-                setIsSpinning(true);
-                
-                let currentAngle = 0;
-                const totalRotation = 20 + Math.random() * 10;
-                let duration = 0;
-                
-                const animate = () => {
-                    duration += 0.05;
-                    if (duration < 5) {
-                        currentAngle += (5 - duration) * 0.1;
-                        startAngle.current = currentAngle;
-                        drawWheel(currentAngle);
-                        requestAnimationFrame(animate);
-                    } else {
-                        finishSpin();
-                    }
-                };
-                animate();
-            };
-
-            const finishSpin = async () => {
-                const index = Math.floor(Math.random() * ALL_OPTIONS.length);
-                const selected = ALL_OPTIONS[index];
-                const pickData = { 
-                    userName, 
-                    color: selected.name, 
-                    group: selected.group, 
-                    hex: selected.hex, 
-                    key: selected.key, 
-                    timestamp: Date.now() 
-                };
-                
-                try {
-                    await db.collection('artifacts').doc(appId)
-                        .collection('public').doc('data')
-                        .collection('picks').doc(selected.key).set(pickData);
-                    setResult(pickData);
-                } catch (e) {
-                    alert("存入失敗，請檢查 Firebase 權限設定");
-                }
-                setIsSpinning(false);
-            };
-
-            if (loading) return <div className="flex h-screen items-center justify-center">載入中...</div>;
-
             return (
-                <div className="min-h-screen bg-sky-400 p-4 flex flex-col items-center">
-                    <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-xl text-center mt-8">
-                        <div className="flex justify-center"><SailboatBeach /></div>
-                        <h1 className="text-3xl font-black text-sky-900 my-4">釜山 Color Walk</h1>
-                        
-                        {!result ? (
-                            <div className="space-y-4">
-                                <input 
-                                    type="text" 
-                                    placeholder="輸入姓名..." 
-                                    className="w-full border-2 p-3 rounded-xl outline-none"
-                                    value={userName}
-                                    onChange={(e) => setUserName(e.target.value)}
-                                />
-                                <button 
-                                    onClick={spin}
-                                    disabled={isSpinning}
-                                    className="w-full bg-sky-600 text-white py-4 rounded-xl font-bold"
-                                >
-                                    {isSpinning ? '抽取中...' : '開始抽取色彩'}
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="animate-bounce">
-                                <div className="text-4xl font-bold mb-4" style={{ color: result.hex }}>{result.color}</div>
-                                <button onClick={() => setResult(null)} className="text-sky-600 underline">再次抽取</button>
-                            </div>
-                        )}
-                    </div>
-
-                    <canvas ref={canvasRef} width={400} height={400} className="mt-8 bg-white/20 rounded-full" />
-                    
-                    <div className="w-full max-w-md bg-white/80 rounded-3xl p-6 mt-8">
-                        <h3 className="font-bold mb-4 text-sky-900">航海日誌</h3>
-                        <div className="space-y-2">
-                            {picks.map((p, i) => (
-                                <div key={i} className="flex justify-between border-b pb-2 text-sm">
-                                    <span>{p.userName}</span>
-                                    <span style={{ color: p.hex }}>{p.color} ({p.group}組)</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                <div className="flex flex-col items-center justify-center min-h-screen bg-blue-400">
+                    <h1 className="text-white text-4xl font-black">釜山 Color Walk 已連線！</h1>
+                    <p className="text-white mt-4">如果你看到這行字，代表白屏已解決。</p>
                 </div>
             );
         }
